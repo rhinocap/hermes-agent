@@ -688,6 +688,9 @@ platform_toolsets:
 #     # Default false; ordinary messages, replies, and regex wake words stay blocked.
 #     guest_mode: false
 #     # allowed_chats: ["-1001234567890"]
+#     # blocked_senders drops inbound messages from these sender IDs before
+#     # trigger evaluation (defense-in-depth vs bot-to-bot echo loops).
+#     # blocked_senders: [8697551075]
 #     extra:
 #       disable_link_previews: false  # Set true to suppress Telegram URL previews in bot messages
 #

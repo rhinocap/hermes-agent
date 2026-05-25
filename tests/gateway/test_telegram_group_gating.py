@@ -19,6 +19,7 @@ def _make_adapter(
     group_allow_from=None,
     allowed_chats=None,
     group_allowed_chats=None,
+    blocked_senders=None,
     guest_mode=None,
     observe_unmentioned_group_messages=None,
     bot_username="hermes_bot",
@@ -58,6 +59,13 @@ def _make_adapter(
         extra["group_allowed_chats"] = group_allowed_chats
     else:
         extra["group_allowed_chats"] = []
+    if blocked_senders is not None:
+        extra["blocked_senders"] = blocked_senders
+    else:
+        # Keep unit tests isolated from TELEGRAM_BLOCKED_SENDERS in the parent
+        # environment; production adapters without this explicit key still fall
+        # back to the env var.
+        extra["blocked_senders"] = []
     if guest_mode is not None:
         extra["guest_mode"] = guest_mode
     if observe_unmentioned_group_messages is not None:
@@ -751,6 +759,108 @@ def test_group_allow_from_is_enforced_by_gateway_authorization_not_trigger_gate(
     adapter = _make_adapter(group_allow_from=["111"])
 
     assert adapter._should_process_message(_group_message("hello", from_user_id=333)) is True
+
+
+def test_blocked_senders_drop_group_messages_before_other_gates():
+    adapter = _make_adapter(require_mention=False, blocked_senders=["8697551075"])
+
+    # Blocked sender is dropped even though require_mention=False would otherwise pass.
+    assert adapter._should_process_message(_group_message("echo", from_user_id=8697551075)) is False
+    # Unrelated sender is unaffected.
+    assert adapter._should_process_message(_group_message("hello", from_user_id=111)) is True
+
+
+def test_blocked_senders_drop_direct_mentions():
+    """A blocked sender is dropped even when the message explicitly @mentions the bot."""
+    adapter = _make_adapter(require_mention=True, blocked_senders=["8697551075"])
+
+    mentioned = _group_message(
+        "hi @hermes_bot",
+        from_user_id=8697551075,
+        entities=[_mention_entity("hi @hermes_bot")],
+    )
+    assert adapter._should_process_message(mentioned) is False
+
+
+def test_blocked_senders_drop_dms():
+    adapter = _make_adapter(blocked_senders=["8697551075"])
+
+    assert adapter._should_process_message(_dm_message("hello", from_user_id=8697551075)) is False
+    assert adapter._should_process_message(_dm_message("hello", from_user_id=111)) is True
+
+
+def test_blocked_senders_accepts_integer_ids():
+    """Config values supplied as ints (YAML) must match string sender IDs."""
+    adapter = _make_adapter(require_mention=False, blocked_senders=[8697551075])
+
+    assert adapter._should_process_message(_group_message("echo", from_user_id=8697551075)) is False
+
+
+def test_empty_blocked_senders_is_backward_compatible():
+    adapter = _make_adapter(require_mention=False, blocked_senders=[])
+
+    assert adapter._should_process_message(_group_message("hello", from_user_id=8697551075)) is True
+
+
+def test_blocked_senders_not_observed_as_group_context():
+    """A blocked sender's message must not be stored as observed group context."""
+    adapter = _make_adapter(
+        require_mention=True,
+        allowed_chats=["-100"],
+        group_allowed_chats=["-100"],
+        observe_unmentioned_group_messages=True,
+        blocked_senders=["8697551075"],
+    )
+
+    assert adapter._should_observe_unmentioned_group_message(
+        _group_message("side chatter", from_user_id=8697551075)
+    ) is False
+    # A non-blocked sender is still observed normally.
+    assert adapter._should_observe_unmentioned_group_message(
+        _group_message("side chatter", from_user_id=111)
+    ) is True
+
+
+def test_config_bridges_telegram_blocked_senders(monkeypatch, tmp_path):
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        "telegram:\n"
+        "  blocked_senders:\n"
+        "    - 8697551075\n"
+        "    - \"123\"\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.delenv("TELEGRAM_BLOCKED_SENDERS", raising=False)
+
+    config = load_gateway_config()
+
+    assert config is not None
+    assert __import__("os").environ["TELEGRAM_BLOCKED_SENDERS"] == "8697551075,123"
+    tg_cfg = config.platforms.get(Platform.TELEGRAM)
+    assert tg_cfg is not None
+    assert tg_cfg.extra.get("blocked_senders") == [8697551075, "123"]
+
+
+def test_config_env_overrides_telegram_blocked_senders(monkeypatch, tmp_path):
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        "telegram:\n"
+        "  blocked_senders:\n"
+        "    - 8697551075\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("TELEGRAM_BLOCKED_SENDERS", "999")
+
+    config = load_gateway_config()
+
+    assert config is not None
+    assert __import__("os").environ["TELEGRAM_BLOCKED_SENDERS"] == "999"
 
 
 def test_top_level_require_mention_bridges_to_telegram(monkeypatch, tmp_path):

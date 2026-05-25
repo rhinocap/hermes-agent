@@ -101,6 +101,24 @@ TELEGRAM_OBSERVE_UNMENTIONED_GROUP_MESSAGES=true
 
 This requires Telegram to deliver ordinary group messages to the gateway, so disable BotFather privacy mode or promote the bot to group admin as described above.
 
+### Drop messages from specific senders
+
+`blocked_senders` is a denylist of numeric Telegram sender IDs. Any inbound message (DM or group) from a sender in this list is dropped before trigger evaluation — it never reaches the agent and is not stored as observed group context. This is a defense-in-depth gate against bot-to-bot echo loops: when two bots share a group, one bot's outbound can otherwise be ingested by the other as an inbound request and bounced back indefinitely.
+
+```yaml
+telegram:
+  blocked_senders:
+    - 8697551075
+```
+
+Equivalent environment variable:
+
+```bash
+TELEGRAM_BLOCKED_SENDERS=8697551075
+```
+
+`blocked_senders` is independent of the `allowed_chats` / `group_allowed_chats` allowlists and is evaluated first, so a blocked sender is ignored even in an otherwise allowlisted chat. Leave it unset (the default) for no sender filtering.
+
 ## Step 4: Find Your User ID
 
 Hermes Agent uses numeric Telegram user IDs to control access. Your user ID is **not** your username — it's a number like `123456789`.
