@@ -4289,6 +4289,30 @@ class TelegramAdapter(BasePlatformAdapter):
             return {str(part).strip() for part in raw if str(part).strip()}
         return {part.strip() for part in str(raw).split(",") if part.strip()}
 
+    def _telegram_blocked_senders(self) -> set[str]:
+        """Return the set of Telegram sender IDs whose inbound messages are dropped.
+
+        When non-empty, any message (DM or group) from a sender in this set is
+        silently ignored before trigger evaluation.  This is a defense-in-depth
+        gate against bot-to-bot echo loops, where another bot's outbound message
+        would otherwise be ingested as an inbound request and bounced back.
+        Empty set means no restriction (fully backward compatible).
+        """
+        raw = self.config.extra.get("blocked_senders")
+        if raw is None:
+            raw = os.getenv("TELEGRAM_BLOCKED_SENDERS", "")
+        if isinstance(raw, list):
+            return {str(part).strip() for part in raw if str(part).strip()}
+        return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+    def _is_blocked_sender(self, message: Message) -> bool:
+        """Return True when the message's sender ID is in ``blocked_senders``."""
+        blocked = self._telegram_blocked_senders()
+        if not blocked:
+            return False
+        sender_id = str(getattr(getattr(message, "from_user", None), "id", "")).strip()
+        return bool(sender_id) and sender_id in blocked
+
     def _telegram_group_allowed_chats(self) -> set[str]:
         """Return Telegram chats authorized at group scope."""
         raw = self.config.extra.get("group_allowed_chats")
@@ -4562,6 +4586,8 @@ class TelegramAdapter(BasePlatformAdapter):
 
     def _should_observe_unmentioned_group_message(self, message: Message) -> bool:
         """Return True when a group message should be stored but not dispatched."""
+        if self._is_blocked_sender(message):
+            return False
         if not self._telegram_observe_unmentioned_group_messages():
             return False
         if not self._is_group_chat(message):
@@ -4707,7 +4733,16 @@ class TelegramAdapter(BasePlatformAdapter):
         the Telegram bot menu (``/command@botname``) or by explicitly
         mentioning the bot (``@botname /command``), both of which are
         recognised as mentions by :meth:`_message_mentions_bot`.
+
+        Independently of chat type, messages from a sender listed in
+        ``blocked_senders`` are dropped here before any trigger evaluation —
+        defense-in-depth against bot-to-bot echo loops.
         """
+        if self._is_blocked_sender(message):
+            sender_id = str(getattr(getattr(message, "from_user", None), "id", "")).strip()
+            logger.info("[%s] Dropping Telegram message from blocked sender %s", self.name, sender_id)
+            return False
+
         if not self._is_group_chat(message):
             return True
 

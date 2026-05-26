@@ -832,6 +832,8 @@ def load_gateway_config() -> GatewayConfig:
                     bridged["require_mention"] = platform_cfg["require_mention"]
                 if plat == Platform.TELEGRAM and "allowed_chats" in platform_cfg:
                     bridged["allowed_chats"] = platform_cfg["allowed_chats"]
+                if plat == Platform.TELEGRAM and "blocked_senders" in platform_cfg:
+                    bridged["blocked_senders"] = platform_cfg["blocked_senders"]
                 if plat == Platform.TELEGRAM and "group_allowed_chats" in platform_cfg:
                     bridged["group_allowed_chats"] = platform_cfg["group_allowed_chats"]
                 if plat == Platform.TELEGRAM and "allowed_topics" in platform_cfg:
@@ -976,6 +978,13 @@ def load_gateway_config() -> GatewayConfig:
                     if isinstance(ac, list):
                         ac = ",".join(str(v) for v in ac)
                     os.environ["TELEGRAM_ALLOWED_CHATS"] = str(ac)
+                # blocked_senders: if set, inbound messages from these sender IDs are
+                # dropped before trigger evaluation (defense-in-depth vs bot echo loops)
+                bs = telegram_cfg.get("blocked_senders")
+                if bs is not None and not os.getenv("TELEGRAM_BLOCKED_SENDERS"):
+                    if isinstance(bs, list):
+                        bs = ",".join(str(v) for v in bs)
+                    os.environ["TELEGRAM_BLOCKED_SENDERS"] = str(bs)
                 allowed_topics = telegram_cfg.get("allowed_topics")
                 if allowed_topics is not None and not os.getenv("TELEGRAM_ALLOWED_TOPICS"):
                     if isinstance(allowed_topics, list):
